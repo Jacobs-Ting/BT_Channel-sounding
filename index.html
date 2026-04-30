@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bluetooth Channel Sounding - Multipath Simulator</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=Noto+Sans+TC:wght@400;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header / Title -->
+        <header class="header">
+            <h1>Bluetooth Channel Sounding Simulator</h1>
+            <p>Phase-Based Ranging & Channel Impulse Response</p>
+        </header>
+
+        <!-- Master Control Panel -->
+        <section class="control-panel glass-panel">
+            <div class="control-group">
+                <label for="distance-slider">True Distance (m): <span id="distance-val">11</span>m</label>
+                <input type="range" id="distance-slider" min="2" max="20" step="1" value="11">
+            </div>
+            <div class="control-group">
+                <label for="env-mode">Environment:</label>
+                <select id="env-mode">
+                    <option value="free-space">Free Space (LoS)</option>
+                    <option value="multi-path" selected>Multi-path (NLoS Interference)</option>
+                </select>
+            </div>
+            <div class="control-group toggle-group highlight-control">
+                <label for="dsp-calib">Advanced DSP Calibration (First Path + ToF Fusion):</label>
+                <label class="switch">
+                    <input type="checkbox" id="dsp-calib">
+                    <span class="slider round"></span>
+                </label>
+            </div>
+            <button id="start-btn" class="action-btn">🚀 Start Sounding Sequence</button>
+        </section>
+
+        <!-- Main Display Area -->
+        <main class="main-display">
+            <!-- Top Section: Spatial Animation & Metrics -->
+            <div class="top-section">
+                <!-- Spatial Animation -->
+                <div class="spatial-animation glass-panel" id="spatial-container">
+                    <div class="boundary top-boundary">Reflector</div>
+                    <div class="device ue" id="ue-device">UE</div>
+                    <div class="device tag" id="tag-device">Tag</div>
+                    <div class="wave-container" id="wave-container"></div>
+                    <div class="boundary bottom-boundary">Reflector</div>
+                </div>
+
+                <!-- Real-time Metrics -->
+                <div class="metrics-panel glass-panel">
+                    <h3>Real-time Metrics</h3>
+                    <div class="metric-item">
+                        <span class="metric-label">ToF (Time of Flight)</span>
+                        <span class="metric-value neon-text" id="metric-tof">-- ns</span>
+                    </div>
+                    <div class="metric-item">
+                        <span class="metric-label">Current Channel Phase</span>
+                        <span class="metric-value neon-text" id="metric-phase">-- rad</span>
+                    </div>
+                    <div class="metric-item highlight">
+                        <span class="metric-label">Estimated Distance</span>
+                        <span class="metric-value neon-text-blue" id="metric-dist">-- m</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bottom Section: Charts -->
+            <div class="bottom-section">
+                <!-- Phase vs Channel Chart -->
+                <div class="chart-container glass-panel">
+                    <h3>Phase vs. Channel Index</h3>
+                    <div class="canvas-wrapper">
+                        <canvas id="phaseChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- IFFT CIR Chart -->
+                <div class="chart-container glass-panel">
+                    <h3>Channel Impulse Response (CIR)</h3>
+                    <div class="canvas-wrapper">
+                        <canvas id="cirChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
