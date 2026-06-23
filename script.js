@@ -10,22 +10,32 @@ const distanceSlider = document.getElementById('distance-slider');
 const distanceVal = document.getElementById('distance-val');
 const envModeSelect = document.getElementById('env-mode');
 const dspCalibToggle = document.getElementById('dsp-calib');
+const csOperatingMode = document.getElementById('cs-operating-mode');
+const wifiInterferenceToggle = document.getElementById('wifi-interference');
 const startBtn = document.getElementById('start-btn');
 
 const metricTof = document.getElementById('metric-tof');
 const metricPhase = document.getElementById('metric-phase');
 const metricDist = document.getElementById('metric-dist');
+const metricModeDetail = document.getElementById('metric-mode-detail');
 
 const ueDevice = document.getElementById('ue-device');
 const tagDevice = document.getElementById('tag-device');
 const waveContainer = document.getElementById('wave-container');
 const boundaries = document.querySelectorAll('.boundary');
+const phaseViewButtons = document.querySelectorAll('.phase-view-btn');
 
 // --- Global Chart Variables ---
 let phaseChartInstance = null;
 let cirChartInstance = null;
 let animationTimeout = null;
 let chartInterval = null;
+let phaseView = 'dsp';
+let latestPhaseData = null;
+let hoppingSequence = [];
+let strongestCIRDistance = null;
+let mode1TofDistanceNoise = 0;
+let mode1TofTimingNoiseNs = 0;
 
 // --- Initialize Application ---
 function init() {
@@ -35,12 +45,31 @@ function init() {
     distanceSlider.addEventListener('input', (e) => {
         distanceVal.textContent = e.target.value;
         updateDevicePositions();
+        updateCSOperatingMetric();
     });
     
     startBtn.addEventListener('click', startSoundingSequence);
+    csOperatingMode.addEventListener('change', () => {
+        syncCSOperatingMode();
+        updateCSOperatingMetric();
+        renderPhaseChart();
+    });
+    wifiInterferenceToggle.addEventListener('change', () => {
+        updateCSOperatingMetric();
+        renderPhaseChart();
+    });
+    phaseViewButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+            phaseView = button.dataset.phaseView;
+            phaseViewButtons.forEach((item) => item.classList.toggle('active', item === button));
+            renderPhaseChart();
+        });
+    });
 
     // Initial positioning
     updateDevicePositions();
+    syncCSOperatingMode();
+    updateCSOperatingMetric();
 }
 
 function updateDevicePositions() {
@@ -53,6 +82,85 @@ function updateDevicePositions() {
     
     tagDevice.style.left = `calc(${percent}% + 40px)`;
     tagDevice.style.right = 'auto'; // override default
+}
+
+function syncCSOperatingMode() {
+    // Mode 1 can now choose either CIR strategy: first-path detection when enabled,
+    // or the strongest impulse when Advanced DSP Calibration is disabled.
+    dspCalibToggle.disabled = false;
+}
+
+function generateGaussian(mean = 0, standardDeviation = 1) {
+    let u = 0;
+    let v = 0;
+
+    while (u === 0) u = Math.random();
+    while (v === 0) v = Math.random();
+
+    const standardNormal = Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+    return mean + standardNormal * standardDeviation;
+}
+
+function generateMode1TofTimingNoise() {
+    // A ±1 m round-trip ranging error is equivalent to a ±6.67 ns ToF timing jitter.
+    const distanceNoise = (Math.random() * 2 - 1) * 1.0;
+    const timingNoiseNs = (2 * distanceNoise / c) * 1e9;
+    return { distanceNoise, timingNoiseNs };
+}
+
+function updateCSOperatingMetric() {
+    const trueDistance = parseFloat(distanceSlider.value);
+    const isWiFiOn = wifiInterferenceToggle.checked;
+    const D_amb = isWiFiOn ? 15.0 : 150.0;
+
+    const tofNoise = generateGaussian(0, 1.5);
+    const tofEst = Number((trueDistance + tofNoise).toFixed(2));
+
+    const pbrNoise = generateGaussian(0, 0.05);
+    const basePbr = (trueDistance % D_amb) + pbrNoise;
+    const mode2Candidates = isWiFiOn
+        ? [0, 1, 2].map((k) => Number((basePbr + k * D_amb).toFixed(2)))
+        : [Number(basePbr.toFixed(2))];
+
+    const fusionEst = mode2Candidates.reduce((previous, current) =>
+        Math.abs(current - tofEst) < Math.abs(previous - tofEst) ? current : previous
+    );
+
+    metricModeDetail.className = 'metric-subtext';
+
+    if (csOperatingMode.value === 'mode1') {
+        // Mode 1 noise is generated as a timing jitter and converted back into range.
+        const mode1Estimate = strongestCIRDistance ?? (trueDistance + mode1TofDistanceNoise);
+        metricDist.textContent = `${mode1Estimate.toFixed(2)} m`;
+        metricModeDetail.textContent = strongestCIRDistance === null
+            ? 'ToF timing jitter: ±6.67ns | Range error: ±1m'
+            : (dspCalibToggle.checked
+                ? 'CIR: First path selected | ToF timing jitter: ±6.67ns'
+                : 'CIR: Strongest impulse selected | ToF timing jitter: ±6.67ns');
+        metricModeDetail.classList.add('mode-warning');
+    } else if (csOperatingMode.value === 'mode2') {
+        metricDist.textContent = `[${mode2Candidates.map((distance) => `${distance.toFixed(2)}m`).join(', ')}]`;
+        metricModeDetail.textContent = isWiFiOn
+            ? 'Precision: ±5cm | Ambiguity: HIGH (AFH Gaps)'
+            : 'Precision: ±5cm | Ambiguity: None (Full Spectrum)';
+        metricModeDetail.classList.add('mode-warning');
+    } else {
+        if (isWiFiOn) {
+            const candidatesHtml = mode2Candidates.map((distance) => {
+                const formattedDistance = `${distance.toFixed(2)}m`;
+                return distance === fusionEst
+                    ? `<span style="font-weight: bold; color: var(--primary-color, #00E676);">${formattedDistance}</span>`
+                    : `<span style="text-decoration: line-through; opacity: 0.5;">${formattedDistance}</span>`;
+            }).join(', ');
+
+            metricDist.innerHTML = `[${candidatesHtml}]`;
+            metricModeDetail.textContent = 'Precision: ±5cm | Ambiguity: Eliminated via ToF Fusion';
+        } else {
+            metricDist.textContent = `${fusionEst.toFixed(2)} m`;
+            metricModeDetail.textContent = 'Precision: ±5cm | Full Spectrum';
+        }
+        metricModeDetail.classList.add('mode-success');
+    }
 }
 
 // --- Mathematical Models ---
@@ -82,7 +190,96 @@ function generateComplexSignals(d, isMultipath) {
         phases.push(Math.atan2(imagPart, realPart)); // Wrapped phase [-pi, pi]
     }
     
-    return { complexSignals, phases: unwrapPhase(phases) };
+    return {
+        complexSignals,
+        rawPhases: phases,
+        phases: unwrapPhase(phases)
+    };
+}
+
+function createHoppingSequence() {
+    const sequence = Array.from({ length: N }, (_, index) => index);
+    for (let index = sequence.length - 1; index > 0; index--) {
+        const randomIndex = Math.floor(Math.random() * (index + 1));
+        [sequence[index], sequence[randomIndex]] = [sequence[randomIndex], sequence[index]];
+    }
+    return sequence;
+}
+
+function renderPhaseChart(visiblePoints = N) {
+    if (!latestPhaseData) return;
+
+    const isHoppingView = phaseView === 'hopping';
+    const shouldApplyAfhGap =
+        wifiInterferenceToggle.checked &&
+        csOperatingMode.value !== 'mode1';
+    const receivedPairs = [];
+    const receivedHopCount = Math.min(visiblePoints, hoppingSequence.length);
+
+    // This is the single source of truth for both views: actual received hopping samples.
+    for (let hopIndex = 0; hopIndex < receivedHopCount; hopIndex++) {
+        const channelIndex = hoppingSequence[hopIndex];
+        if (shouldApplyAfhGap && channelIndex >= 30 && channelIndex <= 45) continue;
+        receivedPairs.push({
+            hopIndex,
+            channelIndex,
+            rawPhase: latestPhaseData.rawPhases[channelIndex]
+        });
+    }
+
+    let chartData;
+    if (isHoppingView) {
+        chartData = new Array(receivedHopCount).fill(null);
+        receivedPairs.forEach(({ hopIndex, rawPhase }) => {
+            chartData[hopIndex] = rawPhase;
+        });
+    } else {
+        const sortedPairs = [...receivedPairs].sort((a, b) => a.channelIndex - b.channelIndex);
+        const unwrappedPhases = unwrapPhase(sortedPairs.map(({ rawPhase }) => rawPhase));
+        chartData = new Array(N).fill(null);
+        sortedPairs.forEach(({ channelIndex }, index) => {
+            chartData[channelIndex] = unwrappedPhases[index];
+        });
+    }
+
+    phaseChartInstance.data.datasets[0] = isHoppingView
+        ? {
+            label: 'Random Hopping Phase (rad)',
+            data: chartData,
+            borderColor: 'transparent',
+            backgroundColor: 'rgba(242, 169, 0, 0.9)',
+            pointBorderColor: '#fff0c7',
+            pointRadius: 3.5,
+            pointHoverRadius: 5,
+            showLine: false
+        }
+        : {
+            label: 'DSP Reordered & Unwrapped Phase (rad)',
+            data: chartData,
+            borderColor: '#66fcf1',
+            backgroundColor: 'rgba(102, 252, 241, 0.1)',
+            borderWidth: 2,
+            pointRadius: 1,
+            fill: true,
+            tension: 0.2,
+            showLine: true
+        };
+
+    phaseChartInstance.options.scales.x.title.text = isHoppingView
+        ? 'Hop Index (Random Channel Order)'
+        : 'Channel Index (0-71)';
+    phaseChartInstance.options.scales.y.title.text = isHoppingView
+        ? 'Wrapped Phase (rad)'
+        : 'Phase (rad)';
+
+    if (isHoppingView) {
+        phaseChartInstance.options.scales.y.min = -Math.PI;
+        phaseChartInstance.options.scales.y.max = Math.PI;
+    } else {
+        delete phaseChartInstance.options.scales.y.min;
+        delete phaseChartInstance.options.scales.y.max;
+    }
+    phaseChartInstance.update();
 }
 
 // Phase Unwrapping Algorithm
@@ -294,10 +491,16 @@ function startSoundingSequence() {
     
     const trueDist = parseFloat(distanceSlider.value);
     const isMultipath = envModeSelect.value === 'multi-path';
+    const mode1TimingNoise = csOperatingMode.value === 'mode1'
+        ? generateMode1TofTimingNoise()
+        : { distanceNoise: 0, timingNoiseNs: 0 };
+    mode1TofDistanceNoise = mode1TimingNoise.distanceNoise;
+    mode1TofTimingNoiseNs = mode1TimingNoise.timingNoiseNs;
     
     metricTof.textContent = '0.00 ns';
     metricPhase.textContent = 'Measuring...';
     metricDist.textContent = 'Measuring...';
+    strongestCIRDistance = null;
     
     metricTof.classList.add('measuring');
     metricPhase.classList.add('measuring');
@@ -312,15 +515,18 @@ function startSoundingSequence() {
     cirChartInstance.options.plugins.validationWindow.active = false;
     cirChartInstance.update();
     
-    // Generate complex signals and unwrapped phase
+    // Generate complex signals, then scramble the received channel order.
     const signalData = generateComplexSignals(trueDist, isMultipath);
-    const fullPhaseData = signalData.phases;
+    latestPhaseData = signalData;
+    hoppingSequence = createHoppingSequence();
     const fullComplexData = signalData.complexSignals;
     
     // Calculate final ToF early for the animation counter
     let finalTof_ns = (2 * trueDist / c) * 1e9;
     
-    if (isMultipath) {
+    if (csOperatingMode.value === 'mode1') {
+        finalTof_ns += mode1TofTimingNoiseNs;
+    } else if (isMultipath) {
         // ToF should be roughly accurate to True Distance with minor jitter (+/- 2ns)
         const jitter = (Math.random() * 4) - 2; 
         finalTof_ns += jitter;
@@ -345,9 +551,9 @@ function startSoundingSequence() {
         metricTof.textContent = (progress * finalTof_ns).toFixed(2) + ' ns';
 
         if(currentK < N) {
-            phaseChartInstance.data.datasets[0].data.push(fullPhaseData[currentK]);
-            phaseChartInstance.update();
-            metricPhase.textContent = fullPhaseData[currentK].toFixed(2) + ' rad';
+            renderPhaseChart(currentK + 1);
+            const receivedChannel = hoppingSequence[currentK];
+            metricPhase.textContent = signalData.rawPhases[receivedChannel].toFixed(2) + ' rad';
             currentK++;
         }
         
@@ -540,6 +746,8 @@ function finishSequence(trueDist, finalTof_ns, fullComplexData) {
     cirChartInstance.data.labels = cirData.distances.map(d => d.toFixed(1));
     cirChartInstance.data.datasets[0].data = cirData.magnitudes;
     
+    // All CS operating modes can opt into first-path + ToF fusion.
+    // When disabled, peak selection falls back to the globally strongest CIR impulse.
     const isCalibOn = dspCalibToggle.checked;
     let estimatedDist = 0;
     let selectedPeakIndex = -1;
@@ -619,13 +827,19 @@ function finishSequence(trueDist, finalTof_ns, fullComplexData) {
             y: cirData.magnitudes[selectedPeakIndex]
         });
     }
-    
-    metricDist.textContent = estimatedDist.toFixed(2) + ' m';
+
+    // Mode 1 applies the same random ToF timing jitter (converted to metres) after
+    // CIR selects either the first path or the strongest impulse.
+    if (csOperatingMode.value === 'mode1') {
+        strongestCIRDistance = Number((estimatedDist + mode1TofDistanceNoise).toFixed(2));
+    }
     
     if (isCalibOn) {
         metricDist.classList.remove('neon-text-blue');
         metricDist.style.color = '#66fcf1'; // Keep it glowing
     }
+
+    updateCSOperatingMetric();
 
     cirChartInstance.update();
     

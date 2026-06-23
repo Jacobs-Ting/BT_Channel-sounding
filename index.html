@@ -36,6 +36,21 @@
                     <span class="slider round"></span>
                 </label>
             </div>
+            <div class="control-group">
+                <label for="cs-operating-mode">CS Operating Mode (測距模式)</label>
+                <select id="cs-operating-mode">
+                    <option value="mode1">Mode 1: ToF (粗定位)</option>
+                    <option value="mode2">Mode 2: PBR (高精度但模糊)</option>
+                    <option value="mode3" selected>Mode 3: ToF + PBR (雙模融合完全體)</option>
+                </select>
+            </div>
+            <div class="control-group toggle-group">
+                <label for="wifi-interference">啟動 Wi-Fi 干擾 (引發 AFH 頻譜破洞)</label>
+                <label class="switch">
+                    <input type="checkbox" id="wifi-interference">
+                    <span class="slider round"></span>
+                </label>
+            </div>
             <button id="start-btn" class="action-btn">🚀 Start Sounding Sequence</button>
         </section>
 
@@ -66,6 +81,7 @@
                     <div class="metric-item highlight">
                         <span class="metric-label">Estimated Distance</span>
                         <span class="metric-value neon-text-blue" id="metric-dist">-- m</span>
+                        <span class="metric-subtext" id="metric-mode-detail"></span>
                     </div>
                 </div>
             </div>
@@ -74,7 +90,13 @@
             <div class="bottom-section">
                 <!-- Phase vs Channel Chart -->
                 <div class="chart-container glass-panel">
-                    <h3>Phase vs. Channel Index</h3>
+                    <div class="phase-chart-header">
+                        <h3>Phase vs. Channel Index</h3>
+                        <div class="phase-view-toggle" role="group" aria-label="相位圖顯示模式">
+                            <button type="button" class="phase-view-btn active" data-phase-view="dsp">🧠 DSP 整理相位</button>
+                            <button type="button" class="phase-view-btn" data-phase-view="hopping">📡 隨機跳頻相位</button>
+                        </div>
+                    </div>
                     <div class="canvas-wrapper">
                         <canvas id="phaseChart"></canvas>
                     </div>
