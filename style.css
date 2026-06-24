@@ -315,6 +315,30 @@ input:checked + .slider:before {
     box-shadow: 0 0 10px var(--accent-glow);
 }
 
+.ue.dual-antenna-array {
+    width: 100px;
+    height: 54px;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    gap: var(--antenna-gap, 10px);
+}
+
+.ue.dual-antenna-array .antenna-element {
+    width: 44px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid var(--text-highlight);
+    border-radius: 9px;
+    color: var(--text-highlight);
+    background: linear-gradient(135deg, #1f2833, #0b0c10);
+    box-shadow: 0 0 10px var(--accent-glow);
+    font-size: 0.72rem;
+    font-weight: 800;
+}
+
 .tag {
     right: 40px;
     background: linear-gradient(135deg, #1f2833, #0b0c10);

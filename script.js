@@ -16,12 +16,22 @@ const tofJitterSlider = document.getElementById('tof-jitter-slider');
 const tofJitterValue = document.getElementById('tof-jitter-val');
 const phaseNoiseSlider = document.getElementById('phase-noise-slider');
 const phaseNoiseValue = document.getElementById('phase-noise-val');
+const trackingDimension = document.getElementById('tracking-dimension');
+const trueAngleControl = document.getElementById('true-angle-control');
+const trueAngleSlider = document.getElementById('true-angle-slider');
+const trueAngleValue = document.getElementById('true-angle-val');
+const antennaSpacingControl = document.getElementById('antenna-spacing-control');
+const antennaSpacingSlider = document.getElementById('antenna-spacing-slider');
+const antennaSpacingValue = document.getElementById('antenna-spacing-val');
 const startBtn = document.getElementById('start-btn');
 
 const metricTof = document.getElementById('metric-tof');
 const metricPhase = document.getElementById('metric-phase');
 const metricDist = document.getElementById('metric-dist');
 const metricModeDetail = document.getElementById('metric-mode-detail');
+const aoaMetricCard = document.getElementById('aoa-metric-card');
+const metricAoaAngle = document.getElementById('metric-aoa-angle');
+const metricAoaPhase = document.getElementById('metric-aoa-phase');
 
 const ueDevice = document.getElementById('ue-device');
 const tagDevice = document.getElementById('tag-device');
@@ -78,6 +88,18 @@ function init() {
         phaseNoiseValue.textContent = Number(phaseNoiseSlider.value).toFixed(2);
         latestPbrNoise = null;
         updateCSOperatingMetric();
+        updateAoaMetric();
+    });
+    trackingDimension.addEventListener('change', updateTrackingDimension);
+    trueAngleSlider.addEventListener('input', () => {
+        trueAngleValue.textContent = trueAngleSlider.value;
+        updateDevicePositions();
+        updateAoaMetric();
+    });
+    antennaSpacingSlider.addEventListener('input', () => {
+        antennaSpacingValue.textContent = Number(antennaSpacingSlider.value).toFixed(2);
+        updateAntennaArraySpacing();
+        updateAoaMetric();
     });
     phaseViewButtons.forEach((button) => {
         button.addEventListener('click', () => {
@@ -91,10 +113,33 @@ function init() {
     updateDevicePositions();
     syncCSOperatingMode();
     updateCSOperatingMetric();
+    updateTrackingDimension();
 }
 
 function updateDevicePositions() {
     const dist = parseFloat(distanceSlider.value);
+
+    if (trackingDimension.value === '2d') {
+        const angleRad = parseFloat(trueAngleSlider.value) * Math.PI / 180;
+        const normalizedDistance = (dist - 1) / 149;
+        const radialPercent = 10 + normalizedDistance * 32;
+        const ueCenterX = 50;
+        const ueCenterY = 50;
+        const tagX = ueCenterX + radialPercent * Math.sin(angleRad);
+        const tagY = ueCenterY - radialPercent * Math.cos(angleRad);
+
+        ueDevice.style.left = `${ueCenterX}%`;
+        ueDevice.style.top = `${ueCenterY}%`;
+        ueDevice.style.right = 'auto';
+        ueDevice.style.transform = 'translate(-50%, -50%)';
+
+        tagDevice.style.left = `${tagX}%`;
+        tagDevice.style.top = `${tagY}%`;
+        tagDevice.style.right = 'auto';
+        tagDevice.style.transform = 'translate(-50%, -50%)';
+        return;
+    }
+
     // Map 1m-150m to a reasonable percentage across the container.
     const minPercent = 20;
     const maxPercent = 80;
@@ -102,6 +147,36 @@ function updateDevicePositions() {
     
     tagDevice.style.left = `calc(${percent}% + 40px)`;
     tagDevice.style.right = 'auto'; // override default
+}
+
+function updateTrackingDimension() {
+    const is2DMode = trackingDimension.value === '2d';
+    trueAngleControl.hidden = !is2DMode;
+    antennaSpacingControl.hidden = !is2DMode;
+    aoaMetricCard.hidden = !is2DMode;
+
+    if (is2DMode) {
+        ueDevice.classList.add('dual-antenna-array');
+        ueDevice.innerHTML = '<span class="antenna-element">Ant A</span><span class="antenna-element">Ant B</span>';
+        updateAntennaArraySpacing();
+    } else {
+        ueDevice.classList.remove('dual-antenna-array');
+        ueDevice.textContent = 'UE';
+        ueDevice.style.left = '';
+        ueDevice.style.top = '';
+        ueDevice.style.transform = '';
+        tagDevice.style.top = '';
+        tagDevice.style.transform = '';
+    }
+
+    updateDevicePositions();
+    updateAoaMetric();
+}
+
+function updateAntennaArraySpacing() {
+    const spacingRatio = parseFloat(antennaSpacingSlider.value);
+    const visualGap = 10 + ((spacingRatio - 0.5) / 0.5) * 18;
+    ueDevice.style.setProperty('--antenna-gap', `${visualGap}px`);
 }
 
 function syncCSOperatingMode() {
@@ -119,6 +194,37 @@ function generateGaussian(mean = 0, standardDeviation = 1) {
 
     const standardNormal = Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
     return mean + standardNormal * standardDeviation;
+}
+
+function wrapToPi(phase) {
+    return ((phase + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+}
+
+function calculateAoa() {
+    const lambda = 0.125;
+    const antennaSpacing = lambda * parseFloat(antennaSpacingSlider.value);
+    const trueAngleDeg = parseFloat(trueAngleSlider.value);
+    const trueAngleRad = trueAngleDeg * Math.PI / 180;
+    const pathDiff = antennaSpacing * Math.sin(trueAngleRad);
+    const phaseNoiseStd = parseFloat(phaseNoiseSlider.value);
+    const measuredPhaseDiff = wrapToPi(
+        (2 * Math.PI * pathDiff) / lambda + generateGaussian(0, 0.1 + phaseNoiseStd)
+    );
+    const normalizedPhase = Math.max(
+        -1,
+        Math.min(1, (measuredPhaseDiff * lambda) / (2 * Math.PI * antennaSpacing))
+    );
+    const estimatedAngleDeg = Math.asin(normalizedPhase) * 180 / Math.PI;
+
+    return { measuredPhaseDiff, estimatedAngleDeg };
+}
+
+function updateAoaMetric() {
+    if (trackingDimension.value !== '2d') return;
+
+    const { measuredPhaseDiff, estimatedAngleDeg } = calculateAoa();
+    metricAoaPhase.textContent = `量測相位差：${measuredPhaseDiff.toFixed(2)} rad`;
+    metricAoaAngle.textContent = `${estimatedAngleDeg.toFixed(1)}°`;
 }
 
 function generateMode1TofTimingNoise() {
@@ -884,6 +990,7 @@ function finishSequence(trueDist, finalTof_ns, fullComplexData) {
     }
 
     updateCSOperatingMetric();
+    updateAoaMetric();
 
     cirChartInstance.update();
     

@@ -60,6 +60,21 @@
                 <label for="phase-noise-slider">環境相位雜訊 σ：<span id="phase-noise-val">0.00</span> rad</label>
                 <input type="range" id="phase-noise-slider" min="0" max="1" step="0.01" value="0">
             </div>
+            <div class="control-group">
+                <label for="tracking-dimension">定位維度 (Tracking Dimension)</label>
+                <select id="tracking-dimension">
+                    <option value="1d" selected>1D 測距 (Ranging Only)</option>
+                    <option value="2d">2D 雙天線測向 (Ranging + AoA)</option>
+                </select>
+            </div>
+            <div class="control-group" id="true-angle-control" hidden>
+                <label for="true-angle-slider">真實入射角 (True Angle)：<span id="true-angle-val">30</span>°</label>
+                <input type="range" id="true-angle-slider" min="-90" max="90" step="1" value="30">
+            </div>
+            <div class="control-group" id="antenna-spacing-control" hidden>
+                <label for="antenna-spacing-slider">天線間距：<span id="antenna-spacing-val">0.50</span>λ</label>
+                <input type="range" id="antenna-spacing-slider" min="0.5" max="1" step="0.05" value="0.5">
+            </div>
             <button id="start-btn" class="action-btn">🚀 Start Sounding Sequence</button>
         </section>
 
@@ -91,6 +106,11 @@
                         <span class="metric-label">Estimated Distance</span>
                         <span class="metric-value neon-text-blue" id="metric-dist">-- m</span>
                         <span class="metric-subtext" id="metric-mode-detail"></span>
+                    </div>
+                    <div class="metric-item highlight" id="aoa-metric-card" hidden>
+                        <span class="metric-label">AoA 角度估算 (Angle Estimation)</span>
+                        <span class="metric-value neon-text-blue" id="metric-aoa-angle">--°</span>
+                        <span class="metric-subtext" id="metric-aoa-phase">量測相位差：-- rad</span>
                     </div>
                 </div>
             </div>
