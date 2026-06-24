@@ -11,7 +11,11 @@ const distanceVal = document.getElementById('distance-val');
 const envModeSelect = document.getElementById('env-mode');
 const dspCalibToggle = document.getElementById('dsp-calib');
 const csOperatingMode = document.getElementById('cs-operating-mode');
-const wifiInterferenceToggle = document.getElementById('wifi-interference');
+const availableChannelSelect = document.getElementById('available-channel-count');
+const tofJitterSlider = document.getElementById('tof-jitter-slider');
+const tofJitterValue = document.getElementById('tof-jitter-val');
+const phaseNoiseSlider = document.getElementById('phase-noise-slider');
+const phaseNoiseValue = document.getElementById('phase-noise-val');
 const startBtn = document.getElementById('start-btn');
 
 const metricTof = document.getElementById('metric-tof');
@@ -36,6 +40,9 @@ let hoppingSequence = [];
 let strongestCIRDistance = null;
 let mode1TofDistanceNoise = 0;
 let mode1TofTimingNoiseNs = 0;
+let availableChannelSet = createAvailableChannelSet(Number(availableChannelSelect.value));
+let latestTofEstimate = null;
+let latestPbrNoise = null;
 
 // --- Initialize Application ---
 function init() {
@@ -45,6 +52,8 @@ function init() {
     distanceSlider.addEventListener('input', (e) => {
         distanceVal.textContent = e.target.value;
         updateDevicePositions();
+        latestTofEstimate = null;
+        latestPbrNoise = null;
         updateCSOperatingMetric();
     });
     
@@ -54,9 +63,21 @@ function init() {
         updateCSOperatingMetric();
         renderPhaseChart();
     });
-    wifiInterferenceToggle.addEventListener('change', () => {
+    availableChannelSelect.addEventListener('change', () => {
+        availableChannelSet = createAvailableChannelSet(Number(availableChannelSelect.value));
+        latestPbrNoise = null;
         updateCSOperatingMetric();
         renderPhaseChart();
+    });
+    tofJitterSlider.addEventListener('input', () => {
+        tofJitterValue.textContent = Number(tofJitterSlider.value).toFixed(1);
+        latestTofEstimate = null;
+        updateCSOperatingMetric();
+    });
+    phaseNoiseSlider.addEventListener('input', () => {
+        phaseNoiseValue.textContent = Number(phaseNoiseSlider.value).toFixed(2);
+        latestPbrNoise = null;
+        updateCSOperatingMetric();
     });
     phaseViewButtons.forEach((button) => {
         button.addEventListener('click', () => {
@@ -74,20 +95,19 @@ function init() {
 
 function updateDevicePositions() {
     const dist = parseFloat(distanceSlider.value);
-    // Map 2m-20m to a reasonable percentage across the container
-    // Let's say 2m = 20% width, 20m = 80% width separation
+    // Map 1m-150m to a reasonable percentage across the container.
     const minPercent = 20;
     const maxPercent = 80;
-    const percent = minPercent + ((dist - 2) / 18) * (maxPercent - minPercent);
+    const percent = minPercent + ((dist - 1) / 149) * (maxPercent - minPercent);
     
     tagDevice.style.left = `calc(${percent}% + 40px)`;
     tagDevice.style.right = 'auto'; // override default
 }
 
 function syncCSOperatingMode() {
-    // Mode 1 can now choose either CIR strategy: first-path detection when enabled,
-    // or the strongest impulse when Advanced DSP Calibration is disabled.
-    dspCalibToggle.disabled = false;
+    const isTofOnlyMode = csOperatingMode.value === 'mode1';
+    dspCalibToggle.disabled = isTofOnlyMode;
+    if (isTofOnlyMode) dspCalibToggle.checked = false;
 }
 
 function generateGaussian(mean = 0, standardDeviation = 1) {
@@ -108,19 +128,55 @@ function generateMode1TofTimingNoise() {
     return { distanceNoise, timingNoiseNs };
 }
 
+function generateAdditionalTofTimingNoise() {
+    const maxDistanceJitter = parseFloat(tofJitterSlider.value);
+    const distanceNoise = (Math.random() * 2 - 1) * maxDistanceJitter;
+    const timingNoiseNs = (2 * distanceNoise / c) * 1e9;
+    return { distanceNoise, timingNoiseNs, maxDistanceJitter };
+}
+
+function getPbrDistanceNoiseStd() {
+    // Demonstration mapping: increasing per-channel phase noise broadens the PBR range fit.
+    return 0.05 + parseFloat(phaseNoiseSlider.value) * 0.5;
+}
+
+function createAvailableChannelSet(channelCount) {
+    const channels = Array.from({ length: N }, (_, index) => index);
+
+    for (let index = channels.length - 1; index > 0; index--) {
+        const randomIndex = Math.floor(Math.random() * (index + 1));
+        [channels[index], channels[randomIndex]] = [channels[randomIndex], channels[index]];
+    }
+
+    return new Set(channels.slice(0, channelCount));
+}
+
 function updateCSOperatingMetric() {
     const trueDistance = parseFloat(distanceSlider.value);
-    const isWiFiOn = wifiInterferenceToggle.checked;
-    const D_amb = isWiFiOn ? 15.0 : 150.0;
+    const selectedChannelCount = availableChannelSelect.value;
+    // Effective PBR ambiguity range by available-channel profile.
+    // 39 channels remain unique below 75 m; 20 channels remain unique below 15 m.
+    const dAmbMap = { '72': 150.0, '39': 75.0, '20': 15.0 };
+    const D_amb = dAmbMap[selectedChannelCount];
 
     const tofNoise = generateGaussian(0, 1.5);
-    const tofEst = Number((trueDistance + tofNoise).toFixed(2));
+    const tofEst = latestTofEstimate ?? Number((trueDistance + tofNoise).toFixed(2));
 
-    const pbrNoise = generateGaussian(0, 0.05);
+    const pbrNoise = latestPbrNoise ?? generateGaussian(0, getPbrDistanceNoiseStd());
     const basePbr = (trueDistance % D_amb) + pbrNoise;
-    const mode2Candidates = isWiFiOn
-        ? [0, 1, 2].map((k) => Number((basePbr + k * D_amb).toFixed(2)))
-        : [Number(basePbr.toFixed(2))];
+    const mode2Candidates = [];
+    // Below D_amb, show the single unambiguous solution.  Once the true range exceeds
+    // D_amb, reveal each periodic equivalent solution up to the simulated true range.
+    const candidateRangeLimit = Math.min(150, Math.max(D_amb, trueDistance));
+    const candidateBoundaryMargin = 0.1; // Includes the equivalent solution at the 0 m / 150 m boundary.
+    for (let k = 0; (basePbr + k * D_amb) <= candidateRangeLimit + candidateBoundaryMargin; k++) {
+        const candidate = basePbr + k * D_amb;
+        if (candidate >= -candidateBoundaryMargin) {
+            const boundedCandidate = Math.max(0, Math.min(candidateRangeLimit, candidate));
+            const roundedCandidate = Number(boundedCandidate.toFixed(2));
+            if (!mode2Candidates.includes(roundedCandidate)) mode2Candidates.push(roundedCandidate);
+        }
+    }
 
     const fusionEst = mode2Candidates.reduce((previous, current) =>
         Math.abs(current - tofEst) < Math.abs(previous - tofEst) ? current : previous
@@ -129,36 +185,27 @@ function updateCSOperatingMetric() {
     metricModeDetail.className = 'metric-subtext';
 
     if (csOperatingMode.value === 'mode1') {
-        // Mode 1 noise is generated as a timing jitter and converted back into range.
+        // Mode 1 is decided solely from ToF, including its configured timing jitter.
         const mode1Estimate = strongestCIRDistance ?? (trueDistance + mode1TofDistanceNoise);
         metricDist.textContent = `${mode1Estimate.toFixed(2)} m`;
         metricModeDetail.textContent = strongestCIRDistance === null
-            ? 'ToF timing jitter: ±6.67ns | Range error: ±1m'
-            : (dspCalibToggle.checked
-                ? 'CIR: First path selected | ToF timing jitter: ±6.67ns'
-                : 'CIR: Strongest impulse selected | ToF timing jitter: ±6.67ns');
+            ? `ToF timing jitter: ±6.67ns | Extra jitter: ±${tofJitterSlider.value}m`
+            : `ToF only | First path detection: Off | Extra jitter: ±${tofJitterSlider.value}m`;
         metricModeDetail.classList.add('mode-warning');
     } else if (csOperatingMode.value === 'mode2') {
         metricDist.textContent = `[${mode2Candidates.map((distance) => `${distance.toFixed(2)}m`).join(', ')}]`;
-        metricModeDetail.textContent = isWiFiOn
-            ? 'Precision: ±5cm | Ambiguity: HIGH (AFH Gaps)'
-            : 'Precision: ±5cm | Ambiguity: None (Full Spectrum)';
+        metricModeDetail.textContent = `PBR phase noise σ: ${Number(phaseNoiseSlider.value).toFixed(2)}rad | Ambiguity Candidates: ${mode2Candidates.length}`;
         metricModeDetail.classList.add('mode-warning');
     } else {
-        if (isWiFiOn) {
-            const candidatesHtml = mode2Candidates.map((distance) => {
-                const formattedDistance = `${distance.toFixed(2)}m`;
-                return distance === fusionEst
-                    ? `<span style="font-weight: bold; color: var(--primary-color, #00E676);">${formattedDistance}</span>`
-                    : `<span style="text-decoration: line-through; opacity: 0.5;">${formattedDistance}</span>`;
-            }).join(', ');
+        const candidatesHtml = mode2Candidates.map((distance) => {
+            const formattedDistance = `${distance.toFixed(2)}m`;
+            return distance === fusionEst
+                ? `<span style="font-weight: bold; color: #00E676;">${formattedDistance}</span>`
+                : `<span style="text-decoration: line-through; opacity: 0.5;">${formattedDistance}</span>`;
+        }).join(', ');
 
-            metricDist.innerHTML = `[${candidatesHtml}]`;
-            metricModeDetail.textContent = 'Precision: ±5cm | Ambiguity: Eliminated via ToF Fusion';
-        } else {
-            metricDist.textContent = `${fusionEst.toFixed(2)} m`;
-            metricModeDetail.textContent = 'Precision: ±5cm | Full Spectrum';
-        }
+        metricDist.innerHTML = `[${candidatesHtml}]`;
+        metricModeDetail.textContent = `Ambiguity: Eliminated via ToF | Phase noise σ: ${Number(phaseNoiseSlider.value).toFixed(2)}rad`;
         metricModeDetail.classList.add('mode-success');
     }
 }
@@ -169,6 +216,7 @@ function updateCSOperatingMetric() {
 function generateComplexSignals(d, isMultipath) {
     const complexSignals = [];
     const phases = [];
+    const phaseNoiseStd = parseFloat(phaseNoiseSlider.value);
     
     for (let k = 0; k < N; k++) {
         const f_k = k * df;
@@ -186,6 +234,11 @@ function generateComplexSignals(d, isMultipath) {
             imagPart += multipathIntensity * Math.sin(phase_NLoS);
         }
         
+        const signalAmplitude = Math.hypot(realPart, imagPart);
+        const noisyPhase = Math.atan2(imagPart, realPart) + generateGaussian(0, phaseNoiseStd);
+        realPart = signalAmplitude * Math.cos(noisyPhase);
+        imagPart = signalAmplitude * Math.sin(noisyPhase);
+
         complexSignals.push({ real: realPart, imag: imagPart });
         phases.push(Math.atan2(imagPart, realPart)); // Wrapped phase [-pi, pi]
     }
@@ -210,16 +263,13 @@ function renderPhaseChart(visiblePoints = N) {
     if (!latestPhaseData) return;
 
     const isHoppingView = phaseView === 'hopping';
-    const shouldApplyAfhGap =
-        wifiInterferenceToggle.checked &&
-        csOperatingMode.value !== 'mode1';
     const receivedPairs = [];
     const receivedHopCount = Math.min(visiblePoints, hoppingSequence.length);
 
     // This is the single source of truth for both views: actual received hopping samples.
     for (let hopIndex = 0; hopIndex < receivedHopCount; hopIndex++) {
         const channelIndex = hoppingSequence[hopIndex];
-        if (shouldApplyAfhGap && channelIndex >= 30 && channelIndex <= 45) continue;
+        if (!availableChannelSet.has(channelIndex)) continue;
         receivedPairs.push({
             hopIndex,
             channelIndex,
@@ -340,18 +390,8 @@ function computeCIR(complexSignals) {
         distances[n] = (n * maxDist) / nfft;
     }
     
-    // We only care about distances 0 to 30m, so filter the results
-    const filteredDistances = [];
-    const filteredMag = [];
-    
-    for(let i=0; i<nfft; i++) {
-        if(distances[i] <= 30) {
-            filteredDistances.push(distances[i]);
-            filteredMag.push(cirMag[i]);
-        }
-    }
-    
-    return { distances: filteredDistances, magnitudes: filteredMag };
+    // Keep the complete 0–150 m unambiguous range for both CIR rendering and peak detection.
+    return { distances, magnitudes: cirMag };
 }
 
 // --- Chart setup ---
@@ -491,9 +531,12 @@ function startSoundingSequence() {
     
     const trueDist = parseFloat(distanceSlider.value);
     const isMultipath = envModeSelect.value === 'multi-path';
+    latestTofEstimate = null;
+    latestPbrNoise = generateGaussian(0, getPbrDistanceNoiseStd());
     const mode1TimingNoise = csOperatingMode.value === 'mode1'
         ? generateMode1TofTimingNoise()
         : { distanceNoise: 0, timingNoiseNs: 0 };
+    const additionalTofTimingNoise = generateAdditionalTofTimingNoise();
     mode1TofDistanceNoise = mode1TimingNoise.distanceNoise;
     mode1TofTimingNoiseNs = mode1TimingNoise.timingNoiseNs;
     
@@ -531,6 +574,7 @@ function startSoundingSequence() {
         const jitter = (Math.random() * 4) - 2; 
         finalTof_ns += jitter;
     }
+    finalTof_ns += additionalTofTimingNoise.timingNoiseNs;
     
     // 2. Spatial Animation
     const totalDuration = 3000; // 3 seconds
@@ -739,6 +783,7 @@ function finishSequence(trueDist, finalTof_ns, fullComplexData) {
     
     // Calculate ToF Distance from the measured ns
     const tofDist = (finalTof_ns / 1e9) * c / 2;
+    latestTofEstimate = Number(tofDist.toFixed(2));
     metricTof.textContent = finalTof_ns.toFixed(2) + ' ns';
     
     // Draw CIR Chart
@@ -746,9 +791,8 @@ function finishSequence(trueDist, finalTof_ns, fullComplexData) {
     cirChartInstance.data.labels = cirData.distances.map(d => d.toFixed(1));
     cirChartInstance.data.datasets[0].data = cirData.magnitudes;
     
-    // All CS operating modes can opt into first-path + ToF fusion.
-    // When disabled, peak selection falls back to the globally strongest CIR impulse.
-    const isCalibOn = dspCalibToggle.checked;
+    // Mode 1 is ToF-only.  First-path selection is available only to PBR and fusion modes.
+    const isCalibOn = dspCalibToggle.checked && csOperatingMode.value !== 'mode1';
     let estimatedDist = 0;
     let selectedPeakIndex = -1;
     
@@ -828,10 +872,10 @@ function finishSequence(trueDist, finalTof_ns, fullComplexData) {
         });
     }
 
-    // Mode 1 applies the same random ToF timing jitter (converted to metres) after
-    // CIR selects either the first path or the strongest impulse.
+    // Mode 1 always uses ToF, never the CIR peak, so multipath and CIR range aliasing
+    // cannot influence its final distance decision.
     if (csOperatingMode.value === 'mode1') {
-        strongestCIRDistance = Number((estimatedDist + mode1TofDistanceNoise).toFixed(2));
+        strongestCIRDistance = Number(tofDist.toFixed(2));
     }
     
     if (isCalibOn) {

@@ -19,8 +19,8 @@
         <!-- Master Control Panel -->
         <section class="control-panel glass-panel">
             <div class="control-group">
-                <label for="distance-slider">True Distance (m): <span id="distance-val">11</span>m</label>
-                <input type="range" id="distance-slider" min="2" max="20" step="1" value="11">
+                <label for="distance-slider">True Distance (m): <span id="distance-val">100</span>m</label>
+                <input type="range" id="distance-slider" min="1" max="150" step="1" value="100">
             </div>
             <div class="control-group">
                 <label for="env-mode">Environment:</label>
@@ -44,12 +44,21 @@
                     <option value="mode3" selected>Mode 3: ToF + PBR (雙模融合完全體)</option>
                 </select>
             </div>
-            <div class="control-group toggle-group">
-                <label for="wifi-interference">啟動 Wi-Fi 干擾 (引發 AFH 頻譜破洞)</label>
-                <label class="switch">
-                    <input type="checkbox" id="wifi-interference">
-                    <span class="slider round"></span>
-                </label>
+            <div class="control-group">
+                <label for="available-channel-count">可用通道數量 (Available Channels)</label>
+                <select id="available-channel-count">
+                    <option value="72" selected>72 Channels (全頻段)</option>
+                    <option value="39">39 Channels</option>
+                    <option value="20">20 Channels</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label for="tof-jitter-slider">額外 ToF 路徑偏差／NLoS 誤差：<span id="tof-jitter-val">0.0</span> m</label>
+                <input type="range" id="tof-jitter-slider" min="0" max="30" step="0.1" value="0">
+            </div>
+            <div class="control-group">
+                <label for="phase-noise-slider">環境相位雜訊 σ：<span id="phase-noise-val">0.00</span> rad</label>
+                <input type="range" id="phase-noise-slider" min="0" max="1" step="0.01" value="0">
             </div>
             <button id="start-btn" class="action-btn">🚀 Start Sounding Sequence</button>
         </section>
